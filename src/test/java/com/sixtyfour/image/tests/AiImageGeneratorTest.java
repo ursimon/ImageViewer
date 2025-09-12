@@ -13,7 +13,7 @@ public class AiImageGeneratorTest {
     public static void main(String[] args) throws Exception {
 
         testImageGenerator();
-         testImageRemix();
+       //  testImageRemix();
 
 /*
         List<String> images = AiImageGenerator.createImages("ai:(random)", false);
@@ -27,7 +27,7 @@ public class AiImageGeneratorTest {
         // line art, sketch drawing with black ink, think lines, anime, very low detail, high contrast, pixel art, white background!", ImageDimensions.SCREEN);
         //images.forEach(System.out::println);
 
-        List<String> images = new IdeogramImageGenerator().createImages("ai:A woman in a tank top.", ImageDimensions.SCREEN);
+        List<String> images = new IdeogramImageGenerator().createImages("ai:A cat sits in a meadow at noon.  black and white comic drawing, black and white line art, thick lines", ImageDimensions.RETRO);
         images.forEach(System.out::println);
     }
 

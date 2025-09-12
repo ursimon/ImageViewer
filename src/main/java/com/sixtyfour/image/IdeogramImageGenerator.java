@@ -63,6 +63,10 @@ public class IdeogramImageGenerator implements ImageGenerator {
                 Logger.log("Generating screen fitting image!");
                 resolution = Resolution.R_1152x704;
                 break;
+            case RETRO:
+                Logger.log("Generating retro screen fitting image!");
+                resolution = Resolution.R_1088x832;
+                break;
             case CROPPED:
                 Logger.log("Generating 'cropped' image!");
                 resolution = Resolution.R_1536x576;
