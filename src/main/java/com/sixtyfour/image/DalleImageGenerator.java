@@ -19,7 +19,7 @@ public class DalleImageGenerator implements ImageGenerator {
 
     private final static String BASE_URL = "https://api.openai.com/v1/images/generations";
     private final static String JSON_DALLE2 = "{\"model\":\"dall-e-2\",\"prompt\":\"{0}\",\"n\": 2,\"size\":\"256x256\" }";
-    private final static String JSON_DALLE3 = "{\"model\":\"dall-e-3\",\"prompt\":\"{0}\",\"n\": 1,\"size\":\"{1}\" }";
+    private final static String JSON_DALLE3 = "{\"model\":\"gpt-image-2\",\"prompt\":\"{0}\",\"n\": 1,\"size\":\"{1}\" }";
     private static Config config = new Config();
     private String DALL_E_2_MODE = "(2)";
 
@@ -112,7 +112,6 @@ public class DalleImageGenerator implements ImageGenerator {
         for (Map entry:data) {
             ret.add(entry.get("url").toString());
         }
-
         return ret;
     }
 
