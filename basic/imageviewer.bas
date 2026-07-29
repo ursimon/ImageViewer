@@ -217,6 +217,7 @@
 45820 print chr$(147);"Getting remote address...":gosub 45700
 45830 gosub 46500:tc%=100:gosub 41500:of=0:gosub 42000
 45840 gu$=mg$
+45845 rem gu$="http://localhost:8080/ImageViewer/"
 45850 print:print "Address: ";gu$:return
 
 46000 rem check load error
