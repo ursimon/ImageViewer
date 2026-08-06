@@ -5,5 +5,5 @@ package com.sixtyfour.image;
  */
 public enum ImageDimensions {
 
-    SQUARE, SCREEN, CROPPED, RETRO;
+    SQUARE, SCREEN, CROPPED, RETRO, A4;
 }

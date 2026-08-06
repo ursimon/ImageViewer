@@ -70,6 +70,10 @@ public class IdeogramImageGenerator implements ImageGenerator {
                     Logger.log("Generating retro screen fitting image!");
                     resolution = ResolutionV4.R_1152x864.getValue();
                     break;
+                case A4:
+                    Logger.log("Generating A4 fitting image!");
+                    resolution = Resolution.R_864x1152.getValue();
+                    break;
                 case CROPPED:
                     Logger.log("Generating 'cropped' image!");
                     resolution = ResolutionV4.R_3328x1248.getValue();
@@ -88,6 +92,10 @@ public class IdeogramImageGenerator implements ImageGenerator {
                 case RETRO:
                     Logger.log("Generating retro screen fitting image!");
                     resolution = Resolution.R_1088x832.getValue();
+                    break;
+                case A4:
+                    Logger.log("Generating A4 fitting image!");
+                    resolution = Resolution.R_864x1152.getValue();
                     break;
                 case CROPPED:
                     Logger.log("Generating 'cropped' image!");

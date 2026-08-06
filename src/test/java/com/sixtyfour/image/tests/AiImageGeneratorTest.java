@@ -12,8 +12,8 @@ public class AiImageGeneratorTest {
 
     public static void main(String[] args) throws Exception {
 
-         testImageGenerator();
-        // testImageRemix();
+        // testImageGenerator();
+         testImageRemix();
 
 /*
         List<String> images = AiImageGenerator.createImages("ai:(random)", false);
@@ -26,16 +26,16 @@ public class AiImageGeneratorTest {
         //List<String> images = new DalleImageGenerator().createImages("ai:princess zelda get captured by an evil wizard, b/w, comic panel, line art, sketch drawing with black ink, think lines, anime, very low detail, high contrast, pixel art, white background!", ImageDimensions.SCREEN);
         //images.forEach(System.out::println);
 
-        List<String> images = new IdeogramImageGenerator().createImages("ai:A cat sits in a meadow at noon.  black and white comic drawing, black and white line art, thick lines", ImageDimensions.RETRO);
-        images.forEach(System.out::println);
+       // List<String> images = new IdeogramImageGenerator().createImages("ai:A cat sits in a meadow at noon.  black and white comic drawing, black and white line art, thick lines", ImageDimensions.RETRO);
+        //images.forEach(System.out::println);
     }
 
     private static void testImageRemix() throws Exception {
         //List<String> images = new DalleImageGenerator().createImages("ai:princess zelda get captured by an evil wizard, b/w, comic panel,
         // line art, sketch drawing with black ink, think lines, anime, very low detail, high contrast, pixel art, white background!", ImageDimensions.SCREEN);
         //images.forEach(System.out::println);
-        byte[] image = Files.readAllBytes(new File("K:\\Video\\Retro\\TI 99-4A Games\\Title.jpg").toPath());
-        List<String> images = new IdeogramImageGenerator().createImages("ai:The pyramid from Q*Bert lays onto a TI 99/4A! Q*Bert and some enemies are jumping around on the pyramid", image, 80, ImageDimensions.SCREEN);
+        byte[] image = Files.readAllBytes(new File("E:\\TEXTE\\Privat\\pics\\stories\\Geschichte\\Titel1.png").toPath());
+        List<String> images = new IdeogramImageGenerator().createImages("ai:Create a variant of this image!", image, 80, ImageDimensions.A4);
         images.forEach(System.out::println);
     }
 
