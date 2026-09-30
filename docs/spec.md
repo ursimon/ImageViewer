@@ -71,6 +71,7 @@ server:
   port: 8080
   publicBaseUrl: http://192.168.1.50:8080     # what QR codes and redirects point to
   adminPassword: ${ADMIN_PASSWORD}             # optional; LAN-only admin page otherwise
+  contact: you@example.com                     # sent in the User-Agent of outgoing requests (Wikimedia requires one)
 
 playlist:
   mode: rotate                                   # rotate | solo
@@ -153,7 +154,7 @@ The C64 sends no channel name. The server keeps a **cursor per client** and adva
 ### 5.3 Wikipedia picture of the day (`wikipedia-potd`)
 
 * **Source:** Wikimedia feed API, `https://api.wikimedia.org/feed/v1/wikipedia/{language}/featured/{YYYY}/{MM}/{DD}`. The server uses the `image` part: a thumbnail URL, title, description and credit.
-* **Auth:** none. Requests must send a descriptive `User-Agent` with a contact address (Wikimedia's policy).
+* **Auth:** none. Requests must send a descriptive `User-Agent` with a contact address (Wikimedia's policy); the server builds it from `server.contact`.
 * **Changes:** once a day. Every other request answers "unchanged".
 * **Special cases:**
   * Videos and animations: use the still thumbnail.
