@@ -247,6 +247,16 @@ Per 1,000 photos: ~100 MB of source JPEG + ~10 MB of `.koa` per variant. A small
 * Rate-limit `op=pair` and code entry. Codes are single-use and short-lived.
 * The existing servlet's path checks (`..`, `\`) stay. Photo ids never map directly to file paths.
 
+**What survives a power cycle:**
+
+| Event | Effect |
+|---|---|
+| C64 switched off and on | Nothing lost. The client reads the device token from its disk file and continues where the slideshow left off (the last index can be saved too). No QR code, no Google login. |
+| Server restarted | Nothing lost. Devices, photo lists and converted images live in SQLite/H2 + the file store (the Phase 1 PoC keeps state in memory and doesn't survive this). |
+| C64 booted without its disk (different disk, loaded from the network) | The token is gone, so the C64 shows a QR code again. **Re-pairing only reconnects:** photos belong to the portal account, not the token. After the scan the portal offers "reconnect this C64 to your existing photos" (it matches the MAC), with no re-picking. |
+| Adding photos | Needs Google sign-in on the phone every time, because the Picker is interactive. The phone's browser usually remembers the Google login, so it's scan → consent → pick. Testing mode's 7-day expiry doesn't matter because nothing on the server depends on a stored Google token. |
+| Access revoked in the Google account | Already-imported photos keep working until the user removes them on the portal or unpairs. The next "Pick more" asks for consent again. |
+
 ### 6.7 Photo sources (applying §3.4)
 
 The ingest, store, conversion and C64 protocol don't care where a photo came from. Make this explicit with a small `PhotoSource` interface, so a device can have several sources attached and the C64 shows their combined list.
