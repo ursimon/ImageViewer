@@ -1,6 +1,6 @@
 # Feasibility Study: Turning ImageViewer into a Google Photos Viewer for the C64 + WiC64
 
-*Status: decisions recorded (see §10), prior art reviewed (§3.4) · Date: 2026-09-30*
+*Status: decisions recorded (see §10), prior art reviewed (§3.4). **Direction changed:** stateless middleware, no stored images (decision 9); next step is the [web-only prototype](web-prototype-plan.md) · Date: 2026-09-30*
 *Input: Google Doc "C64 Wic64 Google Photos viewer" (EN) / "C64 WiC64 Google Photos Viewer" (CZ original with sources), this repository, and public documentation checked on the date above.*
 
 ---
@@ -387,8 +387,9 @@ Agreed on 2026-09-30:
 | 4 | WiC64 firmware | **Firmware 2.0+ required** | Driver option A (official wic64-library, §7.3). Use the `R` protocol: the client checks the response size before accepting a payload, reports errors via `WIC64_GET_STATUS_MESSAGE`, and uses `%mac`. Option C (legacy `universal.prg`) is dropped except in the BASIC-based PoC. The client checks the firmware version at boot and shows "WiC64 firmware 2.0+ required". |
 | 5 | "Pick more" behaviour | **Append** | New picks are added to the end of the set. Duplicates are skipped by Google media item id. **To verify in the spike:** that Picker ids stay the same across sessions; otherwise fall back to filename + create time. A "clear all photos" action is on the portal and behind a confirm key on the C64. The per-device cap (for example 2,000, configurable) drops the oldest photos first, and the portal warns before that happens. |
 | 6 | C64 features at launch | **Hires toggle, dither/aspect options, save to disk, photo info** | See the variant caching and `op=info` changes below and in §6.3 and §7.4. |
-| 7 | Next step | **Update the study only** | No implementation yet. When you're ready, the next step is the Phase 0 spike (§8). You'll need to create the Google Cloud project first. |
+| 7 | Next step | **Web-only prototype** (replaces "update the study only") | See [web-prototype-plan.md](web-prototype-plan.md): browser UI, Google sign-in, Picker + shared-album sources, original vs C64 rendering, no stored images. 5.5–7 days. You'll need to create the Google Cloud project first. |
 | 8 | Open: extra sources | **Not decided yet** | Include `SharedAlbumSource` in personal builds? Express interest in the Ambient API partner programme? (§3.5, §6.7) |
+| 9 | Image storage | **None: the server is pure middleware** (fetch → convert → stream; RAM caches only) | **Supersedes** the photo store and ingest queue (§6.2 `PhotoStore`/`IngestService`, §6.4, §6.5) and changes "Append" (decision 5) to "merge the lists of all live sources in RAM". State moves from images to credentials: tokens + Picker session id (or shared-album link) must be kept, and **Picker selections then only last as long as the session, reportedly ~7 days**. Shared-album links have no such limit. To be validated by the [web-only prototype](web-prototype-plan.md) before the C64 work. |
 
 ### 10.1 What the launch features mean for the design
 
