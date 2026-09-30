@@ -1,6 +1,6 @@
 # Spec: C64 image server with connectors
 
-*Status: draft v2 · Date: 2026-09-30 · Replaces the pairing and wire-protocol parts of [google-photos-feasibility.md](google-photos-feasibility.md) and [web-prototype-plan.md](web-prototype-plan.md)*
+*Status: draft v3 · Date: 2026-09-30 · Replaces the pairing and wire-protocol parts of [google-photos-feasibility.md](google-photos-feasibility.md) and [web-prototype-plan.md](web-prototype-plan.md)*
 
 ## 1. What changed from the earlier plan
 
@@ -23,8 +23,8 @@ flowchart LR
     subgraph Server [Image server - Java on Mac mini]
         API[C64 API]
         ADM[Admin web UI]
-        CH[Channels<br/>configured connector instances]
-        PIPE[Render pipeline<br/>fit/crop → overlay → convert]
+        CH[Playlist over enabled channels<br/>(configured connector instances)]
+        PIPE[Render pipeline<br/>fit / crop / smart crop → overlay → convert]
         MSG[Message renderer<br/>text + optional QR]
         API --> CH --> PIPE
         API --> MSG --> PIPE
@@ -39,7 +39,8 @@ flowchart LR
 **Terms used in this spec:**
 * **Connector:** a type of image source (Google Photos, Nano Banana, Wikipedia picture of the day, local folder). It's code.
 * **Channel:** a configured instance of a connector, with a name and its own settings. For example "family" (Google Photos), "today" (Nano Banana), "potd" (Wikipedia) and "scans" (local folder). You can have two channels of the same connector type, such as two folders.
-* **Client:** a C64 (or the browser preview) asking for images.
+* **Playlist:** the server's rule for which enabled channel supplies the next image (§4.1). The C64 never sees channels; it only sees a stream of images.
+* **Client:** a C64 (or the browser preview) asking for images. It is **channel-agnostic**: what it shows is decided entirely by the server's configuration.
 
 ## 3. Connector interface
 
@@ -70,12 +71,16 @@ server:
   port: 8080
   publicBaseUrl: http://192.168.1.50:8080     # what QR codes and redirects point to
   adminPassword: ${ADMIN_PASSWORD}             # optional; LAN-only admin page otherwise
-  defaultChannel: family
+
+playlist:
+  mode: rotate                                   # rotate | solo
+  # solo: family                               # with mode solo, only this channel is shown
+  onProblem: message                            # message | skip (see §4.1)
 
 channels:
   family:
     type: google-photos
-    interval: 60s                               # how long each photo stays
+    enabled: true                               # false = turned off, never shown
     order: shuffle                              # sequential | shuffle
     oauth:
       clientId: ${GOOGLE_CLIENT_ID}
@@ -84,6 +89,7 @@ channels:
 
   today:
     type: nano-banana
+    enabled: true
     apiKey: ${GEMINI_API_KEY}
     model: gemini-2.5-flash-image               # or a newer/cheaper "Nano Banana" model
     schedule: ["07:00", "12:00", "18:00"]       # when to generate a new picture
@@ -94,18 +100,35 @@ channels:
 
   potd:
     type: wikipedia-potd
+    enabled: true
     language: en
     caption: true                               # draw the title into the image
 
   scans:
     type: local-folder
+    enabled: true
     path: /Users/michal/Pictures/C64
     recursive: true
-    interval: 30s
     order: shuffle
 ```
 
 Changing the file and restarting the server applies the change. Editing settings from the admin page is left for later.
+
+There is **no display interval** in the config: how long an image stays is decided by the C64 (§6.4).
+
+### 4.1 Playlist: how the server chooses what the C64 sees
+
+The C64 sends no channel name. The server keeps a **cursor per client** and advances it when the client asks for `nav=next`.
+
+* **`rotate`** (default): each step takes the next item from the next **enabled** channel, in the order they appear in the config file. A channel with several items (Google Photos, local folder) moves on to its next item each time its turn comes round. A channel with one item per day (Wikipedia) or per scheduled run (Nano Banana) shows that item on each of its turns.
+* **`solo`:** only the named channel is used. It's handy for testing one connector, and the admin page has a "Show only this channel" switch that changes it without editing the file.
+* **`enabled: false`** removes a channel from everything.
+* **A channel that can't deliver** (needs sign-in, error, nothing to show yet):
+  * `onProblem: message` (default): its turn shows the message image (§8), so a problem is visible even while the others still work. The message appears once per cycle, not on every step.
+  * `onProblem: skip`: the channel is left out until it recovers. Problems then show only on the admin page.
+  * If **every** enabled channel has a problem, the messages are what the C64 shows.
+* **Going back (`nav=prev`):** the server keeps the last 20 images shown to that client and steps back through them.
+* **Several C64s:** each has its own cursor, and all follow the same playlist. Giving different C64s different playlists is left for later (§13).
 
 ## 5. Connectors
 
@@ -114,7 +137,7 @@ Changing the file and restarting the server applies the change. Editing settings
 * **Source:** Google Photos Picker API. Photos you select in Google's picker (no folders and no Favorites tab; search an album name and select its photos).
 * **Auth:** OAuth code flow + PKCE, started from the **admin page** ("Sign in with Google" → Google → `ursiny.cz` relay → server callback → "Pick photos" → picker). Scope `photospicker.mediaitems.readonly`. Needs the Google Cloud setup from [setup-guide.md](setup-guide.md).
 * **State (RAM only):** access and refresh token, picker session id, photo list with image links (re-listed after 50 min).
-* **Changes:** a new photo every `interval` per client. `nav=next/prev` steps manually.
+* **Changes:** moves on to the next photo each time the playlist reaches this channel and the C64 asks for the next image.
 * **Needs user action when:** not signed in yet; the picker session has expired (reportedly ~7 days); the refresh token is refused. The status becomes `NEEDS_USER_ACTION` and the C64 gets a message image with a QR code to this channel's admin page (§8).
 
 ### 5.2 Nano Banana generator (`nano-banana`)
@@ -140,9 +163,10 @@ Changing the file and restarting the server applies the change. Editing settings
 
 ### 5.4 Local folder (`local-folder`)
 
-* **Source:** image files in a folder on the Mac (JPEG, PNG, WebP, GIF). Ready-made C64 files (`.koa`) are passed through without conversion.
+* **Source:** image files in a folder on the Mac. **Any common format** (JPEG, PNG, WebP, GIF, BMP, and whatever the image libraries in the project can read, including the ones already listed in `pom.xml`) goes through the **full render pipeline** (§9): crop mode, optional overlay, dithering and conversion to the client's `mode`. Nothing is displayed unprocessed.
+* **Already converted files:** a Koala `.koa` file in the folder is passed through as-is, since it's already C64 data. This is an extra, not the normal case; it ignores the client's `mode`, `dither` and `crop`.
 * **Auth:** none.
-* **Changes:** a new file every `interval` per client. The folder is re-scanned every few minutes, so new files appear on their own.
+* **Changes:** moves on to the next file each time the playlist reaches this channel. The folder is re-scanned every few minutes, so new files appear on their own. Files that fail to decode are skipped and logged, and shown once as a message if a channel has no readable files.
 * **Safety:** only files under the configured `path` are ever read (no path tricks from requests).
 * This is the simplest connector, and the first one to build: it tests the whole pipeline with no external service.
 
@@ -159,14 +183,13 @@ All requests are HTTP GET, so they work with the WiC64's plain HTTP GET command.
 | Parameter | Values | Default | Meaning |
 |---|---|---|---|
 | `c` | `%mac` | the client's IP | Client id. The WiC64 replaces `%mac` with its MAC address. It keeps each C64's position separately; it isn't a secret. |
-| `ch` | channel name | `server.defaultChannel` | Which channel to show |
 | `mode` | `mc`, `hi` | `mc` | Multicolor (Koala) or hires (Hi-Eddi) |
 | `dither` | `0`–`100` | `50` | Dithering strength |
-| `ar` | `crop`, `fit` | `crop` | Fill the screen, or keep the whole picture with borders |
+| `crop` | `fit`, `center`, `smart` | `smart` | How a picture that doesn't match the 4:3 screen is handled (§9.1): whole picture with borders, centred crop, or automatic crop to the most important part |
 | `have` | image id | — | The id of the image currently on screen |
-| `nav` | `next`, `prev` | — | Step manually instead of waiting for the interval |
+| `nav` | `next`, `prev` | — | Move the client's cursor on or back before answering. Without `nav` the server answers with the current image again. |
 
-The server works out the current item for this client and channel, and builds the image id from the item id plus `mode`, `dither` and `ar`. If that id equals `have`, it answers "unchanged". Otherwise it sends the image.
+The server works out the client's current item from the playlist (§4.1, after applying `nav`), and builds the image id from the channel, the item id, `mode`, `dither` and `crop`. If that id equals `have`, it answers "unchanged". Otherwise it sends the image. There is no channel parameter and no interval parameter: what to show is the server's decision, and when to ask is the client's (§6.4).
 
 ### 6.2 Response format
 
@@ -179,20 +202,31 @@ Every response starts with the same 10-byte header, so the client never has to g
 | 3 | 1 | Type: `$01` image, `$02` unchanged |
 | 4 | 1 | Flags: bit 0 = message image (an error or a request for action), bit 1 = hires |
 | 5 | 4 | Image id, 32-bit little endian |
-| 9 | 1 | Next poll hint in units of 5 s (0 = client default) |
+| 9 | 1 | Wait hint in units of 5 s (0 = none, use the client's own interval) |
 
 * **Image:** the header is followed by a standard C64 file: Koala (10,003 bytes including its `$6000` load address) or Hi-Eddi as written by Petsciiator's `HiEddiConverter`. Since the payload is a normal file, "save to disk" writes it unchanged.
 * **Unchanged:** the header only.
 * **Size check:** the whole response is at most header + Koala size. The client reads the length from the WiC64 before storing anything and rejects anything larger.
-* **Poll hint:** tells the C64 when something can next change (the slideshow interval, the next Nano Banana run, midnight for Wikipedia). This saves pointless polling.
+* **Wait hint:** set only when the server knows better than the client's interval. A message image says "ask again in 30 s" (the problem may be fixed by then). A picture that will stay the same for hours (Wikipedia's picture of the day, the latest Nano Banana picture) says how long until it can change, so the C64 doesn't poll pointlessly. Otherwise it's 0.
 
 ### 6.3 Other endpoints
 
 | Endpoint | Returns | Used for |
 |---|---|---|
-| `GET /api/info?c=&ch=` | Fixed record: title (≤ 40 chars), date, credit (≤ 40 chars), position/total (0/0 if not applicable), channel name. PETSCII-safe text. | The C64's info screen (key `I`) |
-| `GET /api/channels` | Count byte, then per channel: length byte + name + length byte + description | The C64's channel menu |
+| `GET /api/info?c=` | Fixed record for the image currently shown to this client: title (≤ 40 chars), date, credit (≤ 40 chars), source name (for example "Wikipedia"). PETSCII-safe text. | The C64's info screen (key `I`) |
 | `GET /api/image?…&raw=1` | The bare C64 file without the header | Testing with VICE or other tools |
+
+### 6.4 Who decides when the image changes
+
+**The C64.** The client has its own display interval (set with keys, saved with its settings, like the slideshow delay in the existing BASIC client). The server never advances a client on its own.
+
+| After the response was… | The client waits… | Then asks with… |
+|---|---|---|
+| An image or "unchanged" with hint 0 | its own interval | `nav=next` |
+| Any response with a hint above 0 | the hint | no `nav` (the same current image, in case it changed) |
+| A key press (next/previous) | nothing | `nav=next` / `nav=prev` |
+
+Because asking with `nav=next` on a channel that has only one item just returns the same image, the answer is "unchanged" and the C64 keeps what it has. A short interval on a picture-of-the-day channel is harmless.
 
 ## 7. The C64 client
 
@@ -202,17 +236,17 @@ What it does, in full:
 2. **Loop:**
    * Request `/api/image` with the settings and `have=<id on screen>`.
    * On "image", show it (double-buffered, see the study §7.2). On "unchanged", do nothing.
-   * Wait for the poll hint, or for a key.
+   * Wait as described in §6.4 (its own interval, or the server's hint), or for a key.
 3. **Keys:**
    * Next/previous (sends `nav`).
-   * Change channel (menu from `/api/channels`).
-   * Toggle `mode`, `dither`, `ar`: the next request uses the new settings, the id changes, so a new rendering arrives.
+   * Change the display interval.
+   * Toggle `mode`, `dither`, `crop`: the next request uses the new settings, the id changes, so a new rendering arrives.
    * `I` for the info screen.
    * `S` to save the current image to disk.
    * Change server address, and exit.
 4. **Network or server not reachable:** this is the one case where the C64 has to show a message itself, because no image can arrive. It shows a short text ("Server 192.168.1.50 not reachable, retrying in 30 s"), using the WiC64 status message.
 
-Everything else, including "sign in to Google Photos" and "budget used up", arrives as an image. The client knows nothing about connectors, Google or QR codes.
+Everything else, including "sign in to Google Photos" and "budget used up", arrives as an image. The client knows nothing about channels, connectors, Google or QR codes. Which connectors are on, and in what order, is configured on the server.
 
 ## 8. Message images (errors and requests for action)
 
@@ -220,10 +254,10 @@ When a channel can't deliver, the server still returns an **image**, flagged as 
 
 | Situation | Message image shows | Poll hint |
 |---|---|---|
-| Connector needs the user (sign in, pick photos) | Channel name, one-line instruction, **QR code** to `publicBaseUrl/connectors/{channel}` | 30 s |
+| Connector needs the user (sign in, pick photos) | Channel name (for the person at the server), one-line instruction, **QR code** to `publicBaseUrl/connectors/{channel}` | 30 s |
 | Connector error (Google down, folder missing, API key refused) | Channel name and the error in plain words | 60 s |
 | Nothing to show yet (empty folder, no photos picked) | What to do, and a QR code to the admin page | 30 s |
-| Unknown channel | "No channel named …" and the list of channel names | client default |
+| No channel is enabled | "No channels enabled. Open the admin page." and a QR code to it | 60 s |
 
 * **How they're made:** the message renderer draws text (and the QR code, via ZXing) onto a 320×200 canvas. It then goes through the **same render pipeline and converter** as a photo, with the client's `mode`, so a visible message proves that conversion and transfer work.
 * **If the converter itself fails:** the server returns a built-in, ready-made Koala file ("Server error, see server log"). It ships with the server as a resource, so something always reaches the C64.
@@ -233,7 +267,7 @@ When a channel can't deliver, the server still returns an **image**, flagged as 
 
 ```
 Connector.load(item) → SourceImage
-  → prepare:  crop or fit to 320×200 (ar), optional two-portraits-side-by-side
+  → prepare:  fit to 320×200 with borders, centre crop or smart crop (crop), optional two-portraits-side-by-side
   → overlay:  optional caption/date strip (per channel)
   → convert:  Petsciiator KoalaConverter / HiEddiConverter (mode, dither)
   → frame:    10-byte header + C64 file
@@ -246,9 +280,28 @@ Connector.load(item) → SourceImage
 * **Nothing is written to disk** except temporary files for the converter, which are deleted immediately (the current Petsciiator API takes file paths). The local-folder connector reads your own files; it doesn't copy them.
 * **A restart loses:** the caches, Google tokens (so it needs a new sign-in) and the Nano Banana picture (so one extra generation).
 
+### 9.1 Crop modes
+
+Screens are 4:3 and most photos are not, so every image passes through one of three modes (client parameter `crop`, default `smart`):
+
+| Mode | Result |
+|---|---|
+| `fit` | The whole picture, scaled to fit inside the screen, with borders (letterbox). Border colour is the picture's dominant edge colour, or black if you prefer (server setting). Nothing is cut off. |
+| `center` | Scaled to fill the screen, cropped equally on both sides. Fast and predictable. |
+| `smart` | Scaled to fill the screen, then cropped to the **most important part** of the picture instead of the middle. |
+
+**How `smart` decides.** The window that has the 4:3 shape and a size that fills the screen is slid over the picture, and each position is scored. The best one wins. Planned in two stages:
+
+1. **First version, pure Java, no extra libraries:** score = edge strength and colour variety inside the window (busy, detailed areas score high, empty sky or wall scores low), with a small bonus for staying near the middle so plain pictures don't get odd crops.
+2. **Later, if the first version isn't good enough:** detect faces (an OpenCV or ONNX face detector) and keep them inside the window with margin. This adds a native library, so it's a separate, optional step.
+
+`smart` never rescales unevenly and never rotates. If a picture already has close to a 4:3 shape, `smart` and `center` give the same result. Connectors may pass a **hint** (for example a focus point supplied by the source) that overrides the score; none of the four planned connectors does yet.
+
+**Caching:** the crop mode is part of the image id, so switching modes on the C64 produces a new rendering, and each mode's result is cached separately.
+
 ## 10. Admin web UI and security
 
-* **Admin page** (`/`): a list of channels with their status (OK / needs action / error), and a preview of each channel's current image, both the original and the C64 rendering (this replaces the earlier "virtual C64" page). Per-connector actions include "Sign in with Google", "Pick photos" and "Generate now". It also shows the Google session and budget counters.
+* **Admin page** (`/`): a list of channels with their status (OK / needs action / error), and a preview of each channel's current image, both the original and the C64 rendering with switches for `mode`, `dither` and `crop` (this replaces the earlier "virtual C64" page). A "Show only this channel" switch turns `solo` on and off. Per-connector actions include "Sign in with Google", "Pick photos" and "Generate now". It also shows the Google session and budget counters.
 * **Network:**
   * The server listens on your home network.
   * The C64 API needs no login. It only returns images, and it can't trigger costly work (Nano Banana runs only on its schedule).
@@ -269,20 +322,23 @@ Connector.load(item) → SourceImage
 
 | Step | Content | Days |
 |---|---|---|
-| 1 | Server core: config loader, channel registry, render pipeline, message renderer + built-in fallback image, `/api/image` with header and "unchanged", per-client position, `raw=1` | 2–2.5 |
-| 2 | **Local folder** connector and the admin page with previews. The whole path works without any external service. | 1–1.5 |
+| 1 | Server core: config loader, channel registry, playlist with per-client cursor and history, render pipeline with `fit`/`center` crop, message renderer + built-in fallback image, `/api/image` with header and "unchanged", per-client position, `raw=1` | 2–2.5 |
+| 2 | **Local folder** connector (all image formats through the pipeline) and the admin page with previews. The whole path works without any external service. | 1–1.5 |
+| 2b | **Smart crop**, first version (pure Java scoring window, §9.1) | 1 |
 | 3 | **Wikipedia picture of the day** connector | 0.5–1 |
 | 4 | **Google Photos** connector: OAuth via admin page + relay, picker, re-listing, `NEEDS_USER_ACTION` with QR | 2 |
 | 5 | **Nano Banana** connector: prompt template, schedule, budget cap, "Generate now" | 1 |
-| **Total server** | | **6.5–8** |
-| 6 | Oscar64 C64 client: server-address prompt, settings, poll loop, double buffer, keys, info and channel menu, save to disk | 6–9 |
+| **Total server** | | **7.5–9** |
+| 6 | Oscar64 C64 client: server-address prompt, settings, interval and poll loop, double buffer, keys, info screen, save to disk | 5.5–8 |
 
 Steps 3–5 are independent and can be built in any order after step 2.
 
 ## 13. Open questions
 
-1. **Several C64s:** is one position per client enough, or should a channel show the same image on every C64 at the same time (a shared clock)? The spec gives each client its own position, which covers both one C64 and several.
-2. **Mixing channels:** should one "playlist" channel combine others (e.g. photos all day, the Wikipedia picture every morning)? The interface allows it later without changing the C64 API.
-3. **Caption strip:** should captions be drawn into the picture by default, or only shown on the info screen? The spec leaves it per channel, off by default.
-4. **Nano Banana model and price:** confirm the current model id and per-image price when creating the API key.
-5. **Wikimedia response fields:** confirm the exact JSON field names in step 3.
+1. **Several C64s:** each client has its own cursor and all follow the same playlist. Do you want different C64s to get different playlists (for example one C64 for family photos, one for generated pictures)? It would be a config section mapping client ids (MAC addresses) to playlists, with no change to the C64 API.
+2. **Rotation rules:** plain round-robin over enabled channels is specced. Weights ("photos 4 of 5 turns") or time-of-day rules ("Wikipedia only in the morning") could be added to the playlist config. Do you need them?
+3. **Problem messages:** by default a broken channel shows its message once per cycle (`onProblem: message`). Is that the right default, or would you rather see problems only on the admin page?
+4. **Caption strip:** should captions be drawn into the picture by default, or only shown on the info screen? The spec leaves it per channel, off by default.
+5. **Nano Banana model and price:** confirm the current model id and per-image price when creating the API key.
+6. **Wikimedia response fields:** confirm the exact JSON field names in step 3.
+7. **Smart crop quality:** try the first version on your own photos before deciding whether face detection is worth the extra native library.
