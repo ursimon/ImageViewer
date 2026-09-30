@@ -333,12 +333,19 @@ Screens are 4:3 and most photos are not, so every image passes through one of th
 
 Steps 3–5 are independent and can be built in any order after step 2.
 
-## 13. Open questions
+## 13. Decisions and open questions
 
-1. **Several C64s:** each client has its own cursor and all follow the same playlist. Do you want different C64s to get different playlists (for example one C64 for family photos, one for generated pictures)? It would be a config section mapping client ids (MAC addresses) to playlists, with no change to the C64 API.
-2. **Rotation rules:** plain round-robin over enabled channels is specced. Weights ("photos 4 of 5 turns") or time-of-day rules ("Wikipedia only in the morning") could be added to the playlist config. Do you need them?
-3. **Problem messages:** by default a broken channel shows its message once per cycle (`onProblem: message`). Is that the right default, or would you rather see problems only on the admin page?
-4. **Caption strip:** should captions be drawn into the picture by default, or only shown on the info screen? The spec leaves it per channel, off by default.
-5. **Nano Banana model and price:** confirm the current model id and per-image price when creating the API key.
-6. **Wikimedia response fields:** confirm the exact JSON field names in step 3.
-7. **Smart crop quality:** try the first version on your own photos before deciding whether face detection is worth the extra native library.
+**Decided (2026-09-30):**
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Playlists per C64 | **One playlist for all C64s.** Each keeps its own position. A per-client mapping can be added later without changing the C64 API. |
+| 2 | Rotation | **Plain round-robin** over enabled channels in config order, plus `solo`. No weights or time-of-day rules. |
+| 3 | Problem messages | **`onProblem: message`**: a broken channel shows its message image once per cycle. |
+| 4 | Captions | **Off by default**; title, date and credit are on the info screen (key `I`). A per-channel switch can turn a caption strip on. |
+
+**Still open, to settle during the build:**
+
+1. **Nano Banana model and price:** confirm the current model id and per-image price when creating the API key.
+2. **Wikimedia response fields:** confirm the exact JSON field names in step 3.
+3. **Smart crop quality:** try the first version on your own photos before deciding whether face detection is worth the extra native library.
