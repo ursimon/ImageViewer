@@ -2,121 +2,136 @@
 
 *Status: plan · Date: 2026-09-30 · Companion to [google-photos-feasibility.md](google-photos-feasibility.md)*
 
-## 1. Goal
+## 1. Target flow (the product)
 
-A browser-only prototype, with **no C64 needed yet**, that:
+1. **Start the app on the C64.** It contacts our backend, which starts a pairing and returns a screen with a **QR code**.
+2. **Scan the QR code with a phone.** It opens our backend, which sends you to Google sign-in and then into the **Google Photos Picker**, where you select the photos you want to share.
+3. **The C64 is now authorised** (it polls the backend) and **starts the slideshow.**
 
-1. signs in with Google,
-2. lets you choose photos (Picker) **or** open an album (shared-album link),
-3. shows them in the browser, both as the original and as the **C64 rendering** (the exact Koala/Hi-Eddi bytes the C64 will get, drawn as a PNG),
-4. **stores no images anywhere.** The server is pure middleware: fetch from Google → (convert) → stream to the client.
+Only Google's official Picker API is used. **Shared-album links are out of scope** (decision 8).
 
-The same server endpoints later serve the C64, so the prototype becomes the real backend.
+## 2. Goal of the prototype
 
-## 2. What "no images in the middle" means (and what it costs)
+Test exactly that flow **before any C64 code exists**, with a browser page that plays the C64's part:
 
-The server keeps **no image files and no image database**. Every request fetches the photo from Google, converts it in memory and streams it out. Only short-lived **RAM** caches are allowed (item list ≤ 50 min, a few converted images for prev/next). They disappear on restart.
+* A **"virtual C64" page** (on your PC) starts a pairing and shows the QR code, the same bitmap the C64 will show.
+* You scan it with your phone → Google sign-in → Picker → select → done.
+* The virtual C64 page notices and starts a slideshow of **C64 renderings** (the exact Koala/Hi-Eddi bytes the C64 will get, drawn as a PNG), with the original next to it and the same toggles (multicolor/hires, dither, aspect).
+* **No images are stored.** The server is pure middleware: fetch from Google → convert → stream.
 
-The state doesn't vanish, though; it moves from *images* to *credentials*:
+The virtual C64 page uses the same backend endpoints the real C64 will call, so the prototype *is* the backend.
 
-| Needed to re-fetch a photo later | Why | Kept where |
-|---|---|---|
-| OAuth access token (1 h) + refresh token | Every `baseUrl` request needs `Authorization: Bearer` | Server memory (prototype); encrypted file later if it must survive restarts |
-| Picker session id | `mediaItems.list` issues fresh `baseUrl`s (valid 60 min) only while the session lives | Same |
-| Shared-album link | Re-read the album page for fresh image URLs | Same (the link itself is the secret) |
-
-**Hard limits this runs into:**
-
-| Source | How long a selection keeps working with no stored images | Consequence |
-|---|---|---|
-| **Picker** | Until the Picker session's `expireTime`, reportedly **~7 days** after creation (one third-party data point; confirm in step 0). Refresh tokens of Testing-mode or unverified apps also expire after 7 days. | Photos disappear after about a week, **so you'd re-pick weekly.** OK for a prototype; annoying for a permanent C64 frame. |
-| **Shared-album link** | **Indefinitely**, while the album stays shared. New photos in the album show up automatically. | Pure middleware works long-term. Unofficial, so it can break when Google changes the page. |
-| Ambient API (partner-only) | Indefinitely; built for exactly this | Not available unless accepted. |
-
-**Recommendation:** build both sources in the prototype. It will show quickly whether "weekly re-pick" is acceptable or whether the shared-album source (or, as a fallback, storing converted images after all) is needed for the C64 frame.
-
-## 3. Architecture
+## 3. How the flow works behind the scenes
 
 ```mermaid
-flowchart LR
-    B[Browser<br/>prototype UI] -- HTTP --> M
-    C64[C64 + WiC64<br/>later] -. same endpoints .-> M
-    subgraph M[Middleware server - Java, stateless]
-        A[Auth: OAuth code + PKCE]
-        S[Sources: PickerSource / SharedAlbumSource]
-        L[Item list cache<br/>RAM, ≤50 min]
-        X[Fetch → Petsciiator convert → stream<br/>RAM only]
+sequenceDiagram
+    participant C as C64 (or virtual C64 page)
+    participant M as Middleware server
+    participant P as Phone
+    participant G as Google (OAuth + Picker + image CDN)
+    C->>M: op=pair (MAC)
+    M-->>C: device token + QR screen (https://host/p/7K9QXM)
+    loop every few seconds
+        C->>M: op=status
+        M-->>C: waiting…
     end
-    A --> G1[Google OAuth]
-    S --> G2[Photos Picker API]
-    S --> G3[shared album page]
-    X --> G4[baseUrl / lh3 image CDN]
+    P->>M: GET /p/7K9QXM (QR scan)
+    M-->>P: redirect to Google sign-in (PKCE, state=pairing)
+    P->>G: sign in + consent
+    G-->>M: /auth/callback (code) → tokens
+    M->>G: sessions.create
+    M-->>P: redirect to pickerUri/autoclose
+    P->>G: select photos, Done
+    M->>G: sessions.get (poll) → mediaItemsSet
+    M->>G: mediaItems.list → item list (RAM)
+    C->>M: op=status
+    M-->>C: ready, N photos
+    loop slideshow
+        C->>M: op=img&i=n
+        M->>G: GET baseUrl=w640-h400 + Bearer
+        M-->>C: Koala bytes (converted in RAM)
+    end
 ```
 
-### Per-request flow ("show photo i as C64")
+## 4. What "no images in the middle" means
 
-1. Look up the source's item list in RAM. If it's missing or older than 50 min, re-list (`mediaItems.list` with a refreshed token, or re-parse the album page).
-2. `GET <baseUrl>=w640-h400` (+ Bearer for Picker). The response goes into a byte array, not a file.
-3. Convert with Petsciiator (`KoalaConverter` / `HiEddiConverter`). The current API takes file paths, so use a temp file that's deleted immediately (or `/dev/shm`), or add a stream-based overload in Petsciiator later.
-4. Respond with raw `.koa` bytes (for the C64) or a PNG rendering of them (for the browser).
+The server keeps **no image files and no image database**. Each request fetches the photo from Google, converts it in memory and streams it out. Only short-lived **RAM** caches are used (item list ≤ 50 min, a few converted images for prev/next), and they disappear on restart.
 
-**Latency:** ~0.3 s download + ~0.3–1 s conversion. The browser preloads the next photo; the C64 client will do the same with its hidden VIC buffer.
+To fetch a photo *again later*, the server must keep **credentials instead of images**: the OAuth refresh token and the Picker session id, linked to the device token. That's the minimum state for this design.
 
-## 4. Endpoints
+### Limit 1: a selection only lives as long as its Picker session
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /` | Start page: "Sign in with Google" · "Open shared album link" |
-| `GET /auth/login` → `GET /auth/callback` | OAuth 2.0 auth-code + PKCE, scope `photospicker.mediaitems.readonly`, `access_type=offline` |
-| `POST /picker/session` | `sessions.create` → return `pickerUri` + `/autoclose`; the UI opens it in a new tab |
-| `GET /picker/status` | `sessions.get` (respecting `pollingConfig`) → `{ready: bool}` |
-| `POST /album` | Register a shared-album link (`photos.app.goo.gl/…`) as a source |
-| `GET /api/items?src=…` | JSON list: index, filename, createTime, width, height (**no** Google URLs to the client) |
-| `GET /img/{src}/{i}?v=orig&w=800` | Proxied original (resized by Google), streamed |
-| `GET /img/{src}/{i}?v=c64&mode=mc\|hi&dither=0..100&ar=0\|1` | C64 rendering as PNG (Koala/Hi-Eddi decoded with the VIC-II palette, double-width pixels in multicolor) |
-| `GET /img/{src}/{i}.koa?…` | The exact bytes the C64 will receive (for byte-level tests and a VICE check) |
-| `GET /c64?…` | *Later:* the C64 wire protocol from the study §6.3, built on the same functions |
+| Item | Lifetime | Effect on the C64 |
+|---|---|---|
+| Image link (`baseUrl`) | 60 min | None: the server re-lists silently |
+| Access token | 1 h | None: refreshed silently |
+| **Picker session** | Until its `expireTime`, reportedly **~7 days** (one third-party data point; measured in step 0) | After that the photos can't be fetched any more. **The C64 automatically shows a new QR code**, and you scan and pick again. |
+| Refresh token (Testing mode / unverified app) | 7 days | Same window, so no extra effect |
 
-The web UI is plain HTML + a little JS, served by the same server:
-* a thumbnail grid;
-* a large view with **original | C64** side by side;
-* slideshow (interval, prev/next, keyboard);
-* toggles for multicolor/hires, dither and aspect, the same options the C64 client will have;
-* "Pick more" (a new Picker session; lists are merged in RAM) and a "session expires in N days" hint.
+With pure middleware, **a C64 running for weeks needs a re-scan about once a week.** Because the phone usually stays signed in to Google, a re-scan is QR → confirm → pick. See §8 for ways around it if that turns out to be too often.
 
-## 5. Technology
+### Limit 2: you select photos, not folders
 
-* **Java, in this repository**, reusing Petsciiator and Jackson (already dependencies). No Google client library is needed: `java.net.http.HttpClient` for the REST calls.
-* New package `com.sixtyfour.gphotos` with servlets. Run locally with `mvn jetty:run` (Jetty 9.4 plugin, matches `javax.servlet` 3.1). The existing `ImageViewer` servlet stays untouched.
-* **Local-first:** Google allows `http://localhost` redirect URIs for development, so the prototype needs **no domain and no hosting**. That fits "hosting not decided". A public HTTPS domain only becomes necessary for the QR-from-phone flow (Google rejects private IPs and `.local` in redirect URIs) and for a C64 outside your LAN. A WiC64 on the same LAN can already reach `http://<pc-ip>:8080` for early C64 tests.
-* Config through environment variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `PUBLIC_BASE_URL`.
+The Picker returns individual photos, never a folder. It has no Favorites or Albums tabs. To share "a folder", search the album name in the picker and select its photos (to be tested: select-all / select-by-day). New photos added to that album later are not picked up automatically.
 
-## 6. Steps and effort
+## 5. Endpoints
+
+| Endpoint | Caller | Purpose |
+|---|---|---|
+| `GET /c64?op=pair&mac=…` | C64 / virtual C64 | New pairing: device token + pairing code; QR screen as `.koa` or PNG |
+| `GET /c64?op=status&t=…` | C64 / virtual C64 | waiting / picking / ready (N photos) / expired (show QR again) |
+| `GET /c64?op=img&t=…&i=n&mode=mc\|hi&dither=0..100&ar=0\|1` | C64 | Koala/Hi-Eddi bytes, converted in RAM |
+| `GET /c64?op=info&t=…&i=n` | C64 | Date, file name, position |
+| `GET /p/{code}` | Phone (QR) | Validates the code → Google sign-in (auth-code + PKCE, `state` bound to the device) |
+| `GET /auth/callback` | Google → phone | Code → tokens, `sessions.create`, redirect to `pickerUri` + `/autoclose` |
+| `GET /virtual` | Browser | The virtual C64 page: shows the QR, polls status, runs the slideshow using `op=img` rendered as PNG (+ original side by side) |
+| `GET /img/{i}.png?v=orig\|c64&…&t=…` | Virtual C64 page | PNG versions for the browser; no Google URLs ever reach a client |
+
+The wire format for `/c64` is the one from the study §6.3.
+
+## 6. Technology and hosting
+
+* **Java, in this repository**, reusing Petsciiator (conversion) and Jackson. `java.net.http.HttpClient` handles the Google REST calls, so no Google client library is needed.
+* New package `com.sixtyfour.gphotos`, run with `mvn jetty:run` (Jetty 9.4, matches `javax.servlet` 3.1). The existing `ImageViewer` servlet stays untouched.
+* **The phone must reach the server over HTTPS on a public host name.** Google rejects `localhost`, private IPs and `.local` as redirect targets for a phone. For the prototype that doesn't mean real hosting: run the server on your PC and expose it through a **tunnel** (e.g. Cloudflare Tunnel or ngrok, which give an HTTPS URL). Register that URL as the OAuth redirect. The final hosting decision can wait.
+* The WiC64 can later use the same tunnel URL, or `http://<pc-ip>:8080` on your LAN.
+* Config via environment variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `PUBLIC_BASE_URL`.
+
+## 7. Steps and effort
 
 | Step | Content | Days | Done when |
 |---|---|---|---|
-| 0 | Google Cloud project, Picker API enabled, OAuth consent in Testing, you as test user; one manual session via curl. **Answer the open questions (§7).** | 0.5–1 | A `baseUrl` downloads with your token |
-| 1 | Server skeleton, `jetty:run`, OAuth code + PKCE, tokens in RAM, auto refresh | 1 | "Signed in as …" page |
-| 2 | Picker flow: create session, open `pickerUri/autoclose`, poll, list items; item-list cache with re-list after 50 min | 1 | Picked photos listed in the browser |
-| 3 | Streaming proxy for originals (no disk) + thumbnail grid + large view + slideshow | 1 | Photos browse smoothly |
-| 4 | C64 rendering: convert in memory, Koala/Hi-Eddi → PNG renderer, `.koa` download, mode/dither/aspect toggles | 1–1.5 | Side-by-side original vs C64 view; `.koa` opens in VICE |
-| 5 | `SharedAlbumSource`: parse the album page (pattern-based), continuation for >300 items, same endpoints | 1–1.5 | A shared album works without sign-in and shows newly added photos |
-| **Total** | | **5.5–7** | |
+| 0 | Google Cloud project, Picker API enabled, OAuth consent in Testing, you as test user, tunnel URL as redirect; one manual session via curl. **Measure the open questions (§9).** | 0.5–1 | A `baseUrl` downloads with your token |
+| 1 | Server skeleton, `jetty:run`, pairing codes + device tokens (RAM), `/p/{code}` → OAuth code + PKCE, token refresh | 1 | Scanning a code on the phone ends in "signed in as …" |
+| 2 | Picker: `sessions.create` → redirect to `pickerUri/autoclose`, poll `sessions.get`, `mediaItems.list`; item-list cache with re-list after 50 min; `op=status` | 1 | The phone picks, and the status turns "ready, N photos" |
+| 3 | `op=img`: fetch with Bearer → convert in RAM → Koala/Hi-Eddi bytes; PNG renderer (VIC-II palette); original proxy | 1–1.5 | `.koa` opens in VICE; PNG looks identical |
+| 4 | Virtual C64 page: QR screen (ZXing), status polling, slideshow, toggles, "expired → new QR" handling | 1 | The full flow of §1 works end to end in the browser + phone |
+| **Total** | | **4.5–5.5** | |
 
-After the prototype, the C64 path is: add `/c64` (wire protocol from the study §6.3), then point the existing BASIC client at it for a first test (Phase 1 of the study), then the Oscar64 client.
+Next after the prototype: point a real C64 at `/c64`. First the existing BASIC client for a smoke test, then the Oscar64 client (study §7).
 
-## 7. Questions the prototype must answer
+## 8. If weekly re-scanning is too often
 
-1. **Picker session lifetime:** what `expireTime` do real sessions get, and do `mediaItems.list` calls return fresh `baseUrl`s for the whole lifetime?
-2. **Refresh token lifetime** for Testing mode vs "In production (unverified)". Sources disagree; measure it.
-3. **Favorites in the picker:** does searching "favorites" work? Can whole days or albums be selected at once? Are item ids stable across sessions?
-4. **Shared albums:** parsing robustness, and how many items before continuation is needed.
-5. **On-the-fly conversion time** per photo on your hardware, and whether preloading hides it.
-6. **Is weekly re-picking acceptable** for the C64 use case, or does the frame need the shared-album source / stored conversions?
+To be decided after the prototype has measured the real lifetimes:
 
-## 8. Security (prototype level)
+| Option | Stores | Re-scan needed | Notes |
+|---|---|---|---|
+| **A. Pure middleware** (this plan) | Credentials only | ~weekly | Simplest; fully honours "nothing in the middle" |
+| **B. Cache on the C64's own disk** | Converted images **on your C64's drive** (SD2IEC / 1541), nothing on the server | Only to add photos | While the session is valid, the C64 downloads each picked photo once and saves it as a Koala file (the save feature already exists). Afterwards it plays offline indefinitely. A 1541 side holds ~16 Koala images (40 blocks each); SD2IEC holds thousands. Saving takes ~20–30 s per image at KERNAL speed, but downloading can run in the background over days while the slideshow plays. |
+| **C. Keep converted C64 images on the server** | 10 KB lossy 160×200 renditions only, never originals | Only to add photos | A compromise if B is too slow or you don't have an SD2IEC |
 
-* Only your Google account (a Testing-mode test user).
-* Tokens live only in server RAM, keyed by an HttpOnly session cookie. Nothing is written to disk.
-* The server never sends Google `baseUrl`s or album-page URLs to the browser: clients only see `/img/{src}/{i}`.
-* It binds to `localhost` by default, and to the LAN only when you explicitly enable it for C64 tests.
+## 9. Questions the prototype must answer
+
+1. **Picker session lifetime:** what `expireTime` do real sessions get, and does `mediaItems.list` return fresh `baseUrl`s for the whole lifetime?
+2. **Refresh token lifetime** in Testing mode (expected 7 days).
+3. **Selecting "a folder":** does searching an album name work, and can many photos or whole days be selected quickly? Does searching "favorites" work?
+4. **On-the-fly conversion time** per photo, and whether preloading the next photo hides it.
+5. **Is the ~weekly re-scan acceptable** (option A), or do we go with B or C?
+
+## 10. Security (prototype level)
+
+* Only your Google account (Testing-mode test user).
+* Pairing codes are single-use and valid for 10 minutes. Device tokens are 128-bit random values.
+* Tokens and session ids live only in server RAM, so a server restart means re-pairing (a persisted, encrypted store comes later if needed).
+* The server never gives Google URLs to any client, only `/c64` and `/img` responses.
+* The tunnel exposes only the prototype's endpoints.
