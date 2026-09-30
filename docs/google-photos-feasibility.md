@@ -1,6 +1,6 @@
 # Feasibility Study: Turning ImageViewer into a Google Photos Viewer for the C64 + WiC64
 
-*Status: draft for decision · Date: 2026-09-30*
+*Status: decisions recorded (see §10) · Date: 2026-09-30*
 *Input: Google Doc "C64 Wic64 Google Photos viewer" (EN) / "C64 WiC64 Google Photos Viewer" (CZ original with sources), this repository, and public documentation checked on the date above.*
 
 ---
@@ -26,7 +26,7 @@
 |---|---|
 | Proof of concept with the existing BASIC client unchanged | 4–6 days |
 | Full backend | 10–17 days |
-| Oscar64 client | 8–13 days |
+| Oscar64 client | 9–15 days |
 
 ---
 
@@ -200,6 +200,7 @@ All requests are `GET` so they work with legacy and current WiC64 protocols. All
 | `op=status&t=<token>` | `$02 $01` + fixed struct: state (0=unpaired, 1=picking, 2=ingesting, 3=ready), `total` (u16), `ready` (u16) |
 | `op=img&t=<token>&i=<n>&mode=mc\|hi&dither=0..100&ar=0\|1` | `$00 $60` + Koala (10,003 B incl. header) or Hi-Eddi. `i` wraps modulo `total`. |
 | `op=screen&t=<token>&s=status` | Server-rendered status bitmap (progress bar, "press P to pick more") |
+| `op=info&t=<token>&i=<n>` | `$02 $02` + fixed record: position (u16), total (u16), date `YYYY-MM-DD`, file name (≤ 32 chars, PETSCII-safe) |
 | `op=unpair&t=<token>` | Deletes the device's data; returns `$02 $01` status |
 | any error | `$00 $00` + `"ERROR: <text>"` (existing format) |
 
@@ -265,7 +266,7 @@ Colour RAM (`$D800`) can't be double-buffered. Its 1,000-byte copy (an unrolled 
 |---|---|---|---|
 | **A.** Assemble the official **wic64-library** (ACME, BSD) at a fixed address, `#embed` it, call through a small `__asm` wrapper | Official, firmware-2 `R`/`E` protocols, `%mac`, status messages, timeouts | Two toolchains (ACME + Oscar64); fixed-address glue | **Preferred** |
 | **B.** Port **SM7I/WIC64-CC65** (pure C) to Oscar64 | One language and toolchain | Unofficial; check its licence and protocol version; handshake speed in C must be measured | Fallback |
-| **C.** Reuse `basic/res/universal.prg` at `$C000` (current jump table `$C000/$C003/$C012/$C015/$C018`) | Zero effort, proven in this project | Legacy `W` protocol (deprecated), no size header | Only for a first spike |
+| **C.** Reuse `basic/res/universal.prg` at `$C000` (current jump table `$C000/$C003/$C012/$C015/$C018`) | Zero effort, proven in this project | Legacy `W` protocol (deprecated), no size header | Only for the BASIC-based PoC (firmware 2.0+ decided, §10) |
 
 ### 7.4 Client state machine
 
@@ -276,7 +277,8 @@ BOOT → detect WiC64 → load token from disk
 STATUS: unpaired → PAIR │ picking/ingesting → show progress bitmap, poll │ ready → SHOW(i)
 SHOW(i): flip to preloaded buffer, start timer, preload i+1 into hidden buffer
    keys: SPACE/→/fire next · ← prev · 1–9 delay · M mc/hires · D dither · A aspect
-         S save as Koala to disk (port of existing feature) · P pick more · RUN/STOP exit
+         I photo info · S save to disk (Koala/Hi-Eddi) · P pick more (append)
+         RUN/STOP exit
 errors: show text from WIC64_GET_STATUS_MESSAGE / server "ERROR:", retry with back-off
 ```
 
@@ -296,10 +298,10 @@ The estimates are working days for one developer who knows Java and has some C/6
 | **0. Spike** | GCP project, Testing consent, manual Picker session with curl/Java, download one `baseUrl` with Bearer, convert with Petsciiator | 1–2 | One of your photos shows on the C64 via a hard-coded path |
 | **1. PoC with the existing BASIC client** | `gp:<token>` input mode in `ImageViewerService`; pairing portal + OAuth + Picker + ingest (in-memory/files); return the photo list through the existing `$01 $01` list protocol (22 per page) | 3–4 | Pick 20 photos on a phone → browse them / slideshow on the C64 with **no client change** |
 | **2. Backend proper** | `C64Servlet` protocol, SQLite/H2 store, persistent cache, `ScreenRenderer` (pairing QR), housekeeping, security, deployment on your own domain | 6–11 | Survives restarts, handles 2,000 photos, unpair deletes data |
-| **3. Oscar64 client** | Driver (option A), display + double buffer, state machine, pairing/progress screens, save-to-disk, `.d64` build | 8–13 | Seamless slideshow on real hardware; recovers from Wi-Fi drops |
+| **3. Oscar64 client** | Driver (option A), display + double buffer, state machine, pairing/progress screens, hires/dither/aspect toggles, photo info, save-to-disk, `.d64` build | 9–15 | Seamless slideshow on real hardware; recovers from Wi-Fi drops |
 | **4. Polish (optional)** | Better converter (OKLab, per-cell k-means, face-aware crop), Ambient API application, public release + OAuth verification | open | — |
 
-**Total to a complete personal-use product (phases 0–3): about 18–30 days.**
+**Total to a complete personal-use product (phases 0–3): about 19–32 days.** Public release (OAuth verification, privacy policy) comes on top and mostly means waiting for Google.
 
 ---
 
@@ -319,13 +321,25 @@ The estimates are working days for one developer who knows Java and has some C/6
 
 ---
 
-## 10. Decisions needed from you
+## 10. Decisions
 
-1. **Audience:** personal/family only (Testing mode, no verification), or a public service like the original ImageViewer on the WiC64 portal?
-2. **Scope of the fork:** add Google Photos *next to* the existing URL/search/AI modes, or turn the project into a dedicated Google Photos viewer? This decides whether the Oscar64 client needs the old input modes.
-3. **Hosting:** VPS, home server + tunnel, or cloud container?
-4. **WiC64 firmware baseline:** require firmware ≥ 2.0 (`R` protocol, recommended), or keep legacy compatibility?
-5. **Phase 1 first?** Doing the PoC with the unchanged BASIC client proves the Google side in about a week before any Oscar64 work.
+Agreed on 2026-09-30:
+
+| # | Question | Decision | Consequences for the design |
+|---|---|---|---|
+| 1 | Audience | **Personal/family first, public later** | Start in OAuth **Testing** mode (≤100 accounts, no Google review). Build as if public from day one so verification later is paperwork, not a redesign: multi-user data model, per-user delete on unpair/"forget me", a privacy page on the portal, only the one Picker scope, no stored refresh tokens. Verification is a separate later step (§5). |
+| 2 | Fork scope | **Dedicated Google Photos viewer** | The Oscar64 client is Photos-only: no URL, page, search, AI or PDF input. The existing `ImageViewer` servlet and `basic/imageviewer.bas` stay untouched in the repo. The new backend lives in the same WAR as new servlets (`/p/*`, `/gp/*`) and reuses `ImageViewerService`'s conversion code. The Phase 1 PoC may still use the BASIC client through a `gp:` mode as a throw-away test harness. |
+| 3 | Hosting | **Not decided yet, so keep it hosting-neutral** | All host-specific values (public base URL, OAuth redirect, storage path, DB file) come from config or environment variables, not code. Storage is a plain directory + an embedded SQLite/H2 file, so a VPS, home server + tunnel, or a container with a volume all work. Nothing points at `jpct.de`. Hosting only has to be chosen before Phase 2 (OAuth needs the final HTTPS domain). |
+| 4 | WiC64 firmware | **Firmware 2.0+ required** | Driver option A (official wic64-library, §7.3). Use the `R` protocol: the client checks the response size before accepting a payload, reports errors via `WIC64_GET_STATUS_MESSAGE`, and uses `%mac`. Option C (legacy `universal.prg`) is dropped except in the BASIC-based PoC. The client checks the firmware version at boot and shows "WiC64 firmware 2.0+ required". |
+| 5 | "Pick more" behaviour | **Append** | New picks are added to the end of the set. Duplicates are skipped by Google media item id. **To verify in the spike:** that Picker ids stay the same across sessions; otherwise fall back to filename + create time. A "clear all photos" action is on the portal and behind a confirm key on the C64. The per-device cap (for example 2,000, configurable) drops the oldest photos first, and the portal warns before that happens. |
+| 6 | C64 features at launch | **Hires toggle, dither/aspect options, save to disk, photo info** | See the variant caching and `op=info` changes below and in §6.3 and §7.4. |
+| 7 | Next step | **Update the study only** | No implementation yet. When you're ready, the next step is the Phase 0 spike (§8). You'll need to create the Google Cloud project first. |
+
+### 10.1 What the launch features mean for the design
+
+* **Variants:** multicolor/hires × 5 dither levels × crop/keep-aspect gives up to 20 renditions per photo. Only the default (multicolor, 50%, crop) is converted during ingest. Other variants are converted on first request (~0.3–1 s) and cached on disk with LRU eviction. The client's preload of the next photo into the hidden buffer hides that delay in the slideshow.
+* **Photo info:** ingest stores `createTime` and `mediaFile.filename` from `mediaItems.list`. A new `op=info&i=<n>` returns them as a small fixed-length text record. On the C64, key `I` switches to a text screen with date, file name and position (for example "17 / 480"), and any key goes back. This avoids drawing text into the bitmap.
+* **Save to disk:** a port of the existing Koala save (`imageviewer.bas` lines 21000–21150) through the KERNAL `SAVE` routine. For hires the Hi-Eddi layout is saved. The file name defaults to the photo date (for example `pic 250714`), with a drive-number toggle as today.
 
 ---
 
