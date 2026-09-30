@@ -1,10 +1,20 @@
 # Setup guide: Mac mini backend + Google registration
 
-*Companion to [web-prototype-plan.md](web-prototype-plan.md). Date: 2026-09-30.*
+*Companion to [spec.md](spec.md) and [web-prototype-plan.md](web-prototype-plan.md). Date: 2026-09-30.*
 
 Google's developer pages could not be opened while writing this, so menu names in the Google Cloud console may differ slightly from what is written here. The Maven steps for `petsciiator` were read from that project's own install scripts (Windows `.cmd` files) and translated for macOS; they have not been run on a Mac.
 
-The steps A, B and C are independent, so they can be done in any order.
+What each step is for:
+
+| Step | Needed for |
+|---|---|
+| A. Mac mini | Everything |
+| B. Relay page on ursiny.cz | Only the Google Photos connector (Google sign-in) |
+| C. Google Cloud registration | Only the Google Photos connector |
+| C2. Gemini API key | Only the Nano Banana connector |
+| D. Credentials and config file | Everything (fill in only what your channels use) |
+
+The local folder and Wikipedia connectors need only step A and the config file, so the first prototype steps can run before B and C are done. Steps A, B and C are independent, so they can be done in any order.
 
 ## A. Prepare the Mac mini (about 30-45 min)
 
@@ -72,28 +82,36 @@ The steps A, B and C are independent, so they can be done in any order.
    - Authorised redirect URI, exactly as your relay page address: `https://ursiny.cz/gp/callback.html`.
    - Copy the **client ID** and **client secret**.
 
+## C2. Gemini API key for the Nano Banana connector (about 10 min, optional)
+
+1. Go to Google AI Studio (aistudio.google.com), signed in with any Google account.
+2. Create an API key. Image generation is paid per picture, so enable billing on the key's project when asked, and set a spending alert in Google Cloud.
+3. Note the current image model id and its price (see [spec.md](spec.md) §5.2). The server's `maxPerDay` setting is a second safety cap.
+
 ## D. Store the credentials on the Mac (5 min)
 
-Put the values in a private file outside the repository, for example `~/c64photos.env`:
-
-```
-export GOOGLE_CLIENT_ID=...
-export GOOGLE_CLIENT_SECRET=...
-export PUBLIC_BASE_URL=http://192.168.1.50:8080
-```
-
-Never commit this file or paste the secret into a chat.
+1. Put the secrets in a private file outside the repository, for example `~/c64server/secrets.env`. Leave out the ones you don't use yet:
+   ```
+   export GOOGLE_CLIENT_ID=...
+   export GOOGLE_CLIENT_SECRET=...
+   export GEMINI_API_KEY=...
+   export ADMIN_PASSWORD=...
+   ```
+   Never commit this file or paste a secret into a chat.
+2. The channel configuration goes in `~/c64server/config.yaml`. The example is in [spec.md](spec.md) §4. Start with only a `local-folder` channel pointing at a folder with a few photos, and add the others as their connectors are built.
+3. Set `server.publicBaseUrl` to `http://<Mac's fixed IP>:8080`. QR codes on message images point there.
 
 ## E. What to send back
 
 - The Mac's fixed address, and the relay page address you chose.
 - Your Java version (`java -version`) and whether steps A3, A4 and A5 worked (paste any error).
-- Whether Google accepted the redirect URI when you saved the client.
+- Whether Google accepted the redirect URI when you saved the client (if you did step C).
+- Whether you created a Gemini key (step C2), and which image model it offers.
 
 ## What to expect at the first sign-in
 
 - Google shows "app not verified". Choose Advanced, then continue.
-- In Testing mode the sign-in expires after about 7 days. The plan handles this by showing a new QR code.
+- In Testing mode the sign-in expires after about 7 days. The server then marks the Google Photos channel "needs action", and the C64 shows a message image with a QR code to the admin page, where you sign in again.
 
 ## Why a fixed address (and what about mDNS)
 
@@ -101,7 +119,7 @@ Two different programs have to find the Mac:
 
 | Who | How it finds the Mac | Needs |
 |---|---|---|
-| Phone browser (QR scan and the forwarded callback) | A normal navigation to `http://<address>:8080/...` | An IP works. A `.local` name usually works on iPhone and Mac; Android is less reliable. |
+| Phone browser (admin page, QR code on a message image, forwarded callback) | A normal navigation to `http://<address>:8080/...` | An IP works. A `.local` name usually works on iPhone and Mac; Android is less reliable. |
 | C64 through the WiC64 | The URL stored in the C64 client | An IP works. Whether the WiC64 firmware resolves `.local` (mDNS) names is **not confirmed**. |
 
 A DHCP reservation costs nothing and works for both, so it is the default. A `.local` name can be tested later from the WiC64 as an option; it would let the relay page and the C64 client survive an address change without editing. Google's rule against `.local` applies only to the redirect URI, which is the `ursiny.cz` page, not to where that page forwards.

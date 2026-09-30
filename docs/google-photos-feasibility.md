@@ -1,6 +1,6 @@
 # Feasibility Study: Turning ImageViewer into a Google Photos Viewer for the C64 + WiC64
 
-*Status: decisions recorded (see §10), prior art reviewed (§3.4). **Direction changed:** stateless middleware, no stored images (decision 9); next step is the [web-only prototype](web-prototype-plan.md) · Date: 2026-09-30*
+*Status: background study. **The current architecture is [spec.md](spec.md)** (connector-based image server, all authorisation on the server, C64 asks for the current image). Where this study differs (pairing, device tokens, QR flow on the C64, wire protocol in §6.3, `PhotoSource` in §6.7), the spec wins. Research, Google Photos findings, Oscar64 memory map and risks here remain valid.*
 *Input: Google Doc "C64 Wic64 Google Photos viewer" (EN) / "C64 WiC64 Google Photos Viewer" (CZ original with sources), this repository, and public documentation checked on the date above.*
 
 ---
@@ -386,6 +386,7 @@ Agreed on 2026-09-30:
 | 7 | Next step | **Web-only prototype** (replaces "update the study only") | See [web-prototype-plan.md](web-prototype-plan.md): browser UI, Google sign-in, QR pairing + Picker, virtual-C64 page, original vs C64 rendering, no stored images. 4.5–5.5 days. You'll need to create the Google Cloud project first. |
 | 8 | Extra sources | **Shared-album links rejected.** Picker only (official); Ambient API only if Google ever accepts the project | `SharedAlbumSource` (§6.7) is dropped. The target flow is: C64 shows QR → phone signs in and picks in Google Photos → C64 starts the slideshow (see [web-prototype-plan.md](web-prototype-plan.md) §1). |
 | 9 | Image storage | **None: the server is pure middleware** (fetch → convert → stream; RAM caches only) | **Supersedes** the photo store and ingest queue (§6.2 `PhotoStore`/`IngestService`, §6.4, §6.5) and changes "Append" (decision 5) to "merge the lists of all live sources in RAM". State moves from images to credentials: tokens + Picker session id (or shared-album link) must be kept, and **Picker selections then only last as long as the session, reportedly ~7 days**. **Decided:** re-scan only when Google requires it (expired session or refresh token, or revoked access). The server detects this from Google's error answers and the C64 then shows a new QR code ([plan §8](web-prototype-plan.md)). Caching on the C64's disk or keeping C64 versions on the server were considered and not chosen. To be validated by the [web-only prototype](web-prototype-plan.md) before the C64 work. |
+| 10 | Architecture | **Generic image server with connectors** ([spec.md](spec.md)) | Google Photos becomes one connector next to Nano Banana (prompt with today's date/time), Wikipedia picture of the day and a local folder, each with its own config. All authorisation happens on the server's admin page; the C64 has no pairing or token. The C64 sends its display settings and the id of the image on screen, and gets an image or "unchanged". Errors come back as images with the message drawn in. Replaces the pairing flow (§4.1–4.2), the wire protocol (§6.3) and the `PhotoSource` idea (§6.7). |
 
 ### 10.1 What the launch features mean for the design
 
