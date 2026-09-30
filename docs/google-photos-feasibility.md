@@ -1,6 +1,6 @@
 # Feasibility Study: Turning ImageViewer into a Google Photos Viewer for the C64 + WiC64
 
-*Status: decisions recorded (see §10) · Date: 2026-09-30*
+*Status: decisions recorded (see §10), prior art reviewed (§3.4) · Date: 2026-09-30*
 *Input: Google Doc "C64 Wic64 Google Photos viewer" (EN) / "C64 WiC64 Google Photos Viewer" (CZ original with sources), this repository, and public documentation checked on the date above.*
 
 ---
@@ -13,7 +13,7 @@
 |---|---|---|
 | C64 display and transfer (Koala multicolor / Hi-Eddi hires over WiC64) | ✅ Already solved | This repo already does it. The research doc's memory layout matches `basic/imageviewer.bas` byte for byte. |
 | Image conversion (JPEG → VIC-II) | ✅ Already solved | Petsciiator's `KoalaConverter` / `HiEddiConverter` are already wired into `ImageViewerService`. |
-| Backend access to Google Photos | ⚠️ Feasible with constraints | Only through the **Picker API**. The user has to pick photos on a phone or PC. Nothing is fetched automatically in the background. |
+| Backend access to Google Photos | ⚠️ Feasible with constraints | The **only official path open to hobby projects is the Picker API**: the user picks photos on a phone or PC. Auto-updating sources such as "Favorites" are only available through the partner-only Ambient API. An **unofficial public shared-album link** gives auto-updating albums without OAuth. See §3.4–3.5 for how other viewers do it. |
 | Google OAuth app status | ⚠️ Policy risk | Personal/family use works in "Testing" mode (≤100 test users). A public service needs Google OAuth verification. |
 | New C64 client in Oscar64 | ✅ Feasible, moderate effort | No official Oscar64 WiC64 binding exists, so a small driver is needed (options in §7.3). |
 | Hosting | ⚠️ New requirement | OAuth needs a public HTTPS domain. You can't rely on the original author's `jpct.de` server. |
@@ -55,7 +55,7 @@ Java servlet (ImageViewer.java → ImageViewerService.java), Tomcat, Java 11
 | `URL_SHORTENER` + list protocol (`$01 $01`) | **Reuse for the PoC** | Google `baseUrl`s are far over 170 chars and already need shortening. The list format gives prev/next browsing and slideshow for free. |
 | `basic/imageviewer.bas` | **Reuse for the PoC** | It already has CRSR-left/right browsing, a slideshow (keys 1–9), dithering, hires/multicolor and "save as Koala" to disk. |
 | `Config` (`/webdata/imageviewer/apikey.ini`) | **Extend** | Add the OAuth client id/secret, public base URL and storage path. |
-| Hard-coded `https://jpct.de/…` (shortener, `ipgetiv.php`) | **Must change** | These point at the original author's (EgonOlsen71) infrastructure. A fork needs its own host (§6.7). |
+| Hard-coded `https://jpct.de/…` (shortener, `ipgetiv.php`) | **Must change** | These point at the original author's (EgonOlsen71) infrastructure. A fork needs its own host (§6.8). |
 
 **Build note:** `petsciiator` and `basicv2` are not on Maven Central. They must be built and `mvn install`ed from EgonOlsen71's repositories first, as the README says.
 
@@ -95,6 +95,31 @@ The research is solid on hardware and on Google's policy change. The points belo
 * **Prior art.** [huysmki/wic64-server](https://github.com/huysmki/wic64-server) (MIT) serves local photos as multicolor to a WiC64 client written in 6502 assembly. It uses the official wic64-library, per-cell palette search and Floyd-Steinberg dithering. It's a useful reference for protocol and quality, but it has no Google integration.
 * **C WiC64 driver prior art.** [SM7I/WIC64-CC65](https://github.com/SM7I/WIC64-CC65) is pure C with peek/poke and no cc65-specific syntax, so it's a likely starting point for an Oscar64 port.
 * **Emulator.** VICE 3.8+ emulates the WiC64, so most client development can happen without real hardware. Its coverage of the firmware 2.x `R` protocol still needs checking.
+
+### 3.4 How other Google Photos viewers are built (2025–2026)
+
+After Google removed library-wide read access on 2025-03-31, every DIY and commercial viewer I checked uses one of the patterns below.
+
+| # | Pattern | Who uses it | Official? | Auto-updating? | Favorites? | Setup |
+|---|---|---|---|---|---|---|
+| A | **Picker API import:** the user picks items in Google's picker; the server downloads within 60 min and keeps its own copy | [esp32-photoframe-server](https://github.com/aitjcize/esp32-photoframe-server) (ESP32 e-paper frames), [ha_google_photos_album](https://github.com/OldPhoneKiosk/ha_google_photos_album) (Home Assistant) | ✅ | ❌, re-pick to add | Manually: the picker has no Favorites/Albums tabs, but the user can **search** (album titles, dates, places, things) and multi-select | Google Cloud project + OAuth (Testing mode fine) |
+| B | **Ambient API:** the device is registered via the API; the user chooses sources in the Google Photos app; the server lists that device's items | Aura frames, Google's own Nest Hub / Chromecast ambient mode | ✅ | ✅ | ✅ **Albums, Favorites, people & pets, Recent highlights** (same source choices as Google's own photo-frame devices; confirm when accepted) | **Partner programme only** ("express interest", no public criteria) |
+| C | **Public shared-album link scraping:** fetch `photos.app.goo.gl/…`, pull `lh3.googleusercontent.com` URLs out of the page's embedded JSON, resize with `=wW-hH` | [google-photos-album-image-url-fetch](https://www.npmjs.com/package/google-photos-album-image-url-fetch), home dashboards like [kishore280/home](https://github.com/kishore280/home/pull/47) and [brotherlogic/rose](https://github.com/brotherlogic/rose/issues/82) | ❌ undocumented | ✅, the album is re-read on a schedule | Only if favorites are added to a shared album. **Live albums** (auto-add chosen people/pets) keep updating themselves | None: no OAuth, no Google Cloud project |
+| D | **Leave Google:** move the library to Immich or Synology Photos (e.g. via a Takeout import) and use their APIs | [ImmichFrame](https://github.com/immichFrame/ImmichFrame), esp32-photoframe-server (Immich/Synology sources) | ✅ (their APIs) | ✅ | ✅ native favorites and albums | Self-hosted photo server |
+| — | *Dead ends* | `photoslibrary.readonly` projects such as [frameoff](https://github.com/hellodelay/frameoff) (still documents the removed scope), [mrworf/photoframe](https://github.com/mrworf/photoframe) (dropped Google), [MMM-GooglePhotos](https://github.com/hermanho/MMM-GooglePhotos) (broken since 2025-03) | | | | Library API readonly scopes return 403. Library API favorites filters now only see app-uploaded items. The Data Portability API reportedly has no Photos resource group (Google Photos isn't a DMA core service; verify). Takeout exports the whole library every two months at most. |
+
+**Validation of our design:** esp32-photoframe-server is almost exactly this project with an e-paper panel instead of a C64. It imports through the Picker, crops and dithers per device palette, and serves each device a ready image through a revocable bearer token. Ideas worth borrowing from it: several **photo sources behind one device endpoint**; a **"smart collage"** (it pairs two photos that don't fit the screen; for the C64's landscape screen we'd put **two portrait photos side by side**); and an optional **date overlay**.
+
+### 3.5 So what about "Favorites"?
+
+The Picker isn't technically the only way, but it's the only official way available to a hobby project. The honest options:
+
+| Want | Best available route |
+|---|---|
+| Favorites, **auto-updating**, official | **Ambient API** (pattern B). It's the right technical fit and our backend could add it as one more source. It depends on Google accepting the project into the partner programme; expressing interest costs nothing. |
+| Favorites, official, **one-time or occasional** | **Picker** (pattern A). The user adds favorites through search and multi-select; "Pick more" appends new ones. **To verify in the spike:** whether the picker's search finds "Favorites" directly, whether whole days can be selected at once, and whether media item ids stay stable (for dedupe). |
+| Any album, **auto-updating**, no Google Cloud setup | **Shared-album link** (pattern C). In the Google Photos app, select favorites → "Add to album" → share by link. For people or pets, a **live album** fills itself. New favorites still have to be added to the album by hand. Unofficial and can break without notice. |
+| Everything, including favorites, native | **Immich** (pattern D). It only makes sense if you're willing to move your library off Google Photos. |
 
 ---
 
@@ -222,7 +247,24 @@ Per 1,000 photos: ~100 MB of source JPEG + ~10 MB of `.koa` per variant. A small
 * Rate-limit `op=pair` and code entry. Codes are single-use and short-lived.
 * The existing servlet's path checks (`..`, `\`) stay. Photo ids never map directly to file paths.
 
-### 6.7 Hosting
+### 6.7 Photo sources (applying §3.4)
+
+The ingest, store, conversion and C64 protocol don't care where a photo came from. Make this explicit with a small `PhotoSource` interface, so a device can have several sources attached and the C64 shows their combined list.
+
+| Source | Status | Refresh | Needs | Effort |
+|---|---|---|---|---|
+| `PickerSource` | **Core** (official) | On user action ("Pick more", QR) | OAuth, Google Cloud project | in the §8 estimates |
+| `SharedAlbumSource` | **Experimental, personal builds only** | Re-read every N hours; new photos are ingested, removed ones dropped | Only the album link (it's a secret: anyone with it sees the album) | 2–3 days, incl. pagination beyond the first ~300 items via the page's continuation token |
+| `AmbientSource` | **Future**, only if accepted as a partner | Continuous, sources chosen in the Google Photos app | Partner approval, scope `photosambient.mediaitems` | ~3–5 days once approved |
+| `ImmichSource` | Optional | Continuous; albums and `isFavorite` via Immich API | A self-hosted Immich + API key | ~2 days |
+
+Rules that follow from this:
+* **Items are keyed by `(source, sourceItemId)`.** Dedupe and "Append" work the same way for every source.
+* **The shared-album parser is fragile by nature.** It should find URLs by pattern rather than fixed JSON positions, fail softly (keep the last good list, show "album could not be refreshed" on the status screen), and be switchable off in config. Because of ToS and stability it stays out of any public release (§10, decision 1).
+* **The pairing QR code stays the same for every source.** It links the C64 to a portal account; the portal page then offers "Pick photos in Google Photos" and "Add a shared album link".
+* **Portrait photos:** the conversion step gets an optional "two portraits side by side" layout (from esp32-photoframe-server's smart collage), next to crop and letterbox.
+
+### 6.8 Hosting
 
 It needs a public HTTPS domain. Options, in order of simplicity:
 
@@ -295,11 +337,12 @@ The estimates are working days for one developer who knows Java and has some C/6
 
 | Phase | Content | Days | Exit criterion |
 |---|---|---|---|
-| **0. Spike** | GCP project, Testing consent, manual Picker session with curl/Java, download one `baseUrl` with Bearer, convert with Petsciiator | 1–2 | One of your photos shows on the C64 via a hard-coded path |
+| **0. Spike** | GCP project, Testing consent, manual Picker session with curl/Java, download one `baseUrl` with Bearer, convert with Petsciiator. Check the picker questions from §3.5 (Favorites search, select-by-day, stable ids). Try parsing one of your shared-album links. | 1–2 | One of your photos shows on the C64 via a hard-coded path |
 | **1. PoC with the existing BASIC client** | `gp:<token>` input mode in `ImageViewerService`; pairing portal + OAuth + Picker + ingest (in-memory/files); return the photo list through the existing `$01 $01` list protocol (22 per page) | 3–4 | Pick 20 photos on a phone → browse them / slideshow on the C64 with **no client change** |
-| **2. Backend proper** | `C64Servlet` protocol, SQLite/H2 store, persistent cache, `ScreenRenderer` (pairing QR), housekeeping, security, deployment on your own domain | 6–11 | Survives restarts, handles 2,000 photos, unpair deletes data |
+| **2. Backend proper** | `C64Servlet` protocol, `PhotoSource` interface, SQLite/H2 store, persistent cache, `ScreenRenderer` (pairing QR), housekeeping, security, deployment on your own domain | 6–11 | Survives restarts, handles 2,000 photos, unpair deletes data |
 | **3. Oscar64 client** | Driver (option A), display + double buffer, state machine, pairing/progress screens, hires/dither/aspect toggles, photo info, save-to-disk, `.d64` build | 9–15 | Seamless slideshow on real hardware; recovers from Wi-Fi drops |
-| **4. Polish (optional)** | Better converter (OKLab, per-cell k-means, face-aware crop), Ambient API application, public release + OAuth verification | open | — |
+| **2b. Extra sources (optional)** | `SharedAlbumSource` (auto-updating albums, personal builds), `ImmichSource` | 2–5 | A shared or live album refreshes on the C64 without re-picking |
+| **4. Polish (optional)** | Better converter (OKLab, per-cell k-means, face-aware crop), portrait side-by-side layout, date overlay, Ambient API (if accepted), public release + OAuth verification | open | — |
 
 **Total to a complete personal-use product (phases 0–3): about 19–32 days.** Public release (OAuth verification, privacy policy) comes on top and mostly means waiting for Google.
 
@@ -309,15 +352,16 @@ The estimates are working days for one developer who knows Java and has some C/6
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Google changes or restricts the Picker API further | Low–Med | High | Keep the Google adapter thin. The rest of the backend (store, conversion, C64 protocol) doesn't depend on the source. |
-| Users expect "show my whole library / new photos automatically" | High | Med | Say clearly that it's a curated set. Make "Pick more" one tap on the C64 (P shows a QR). Watch the Ambient API partner programme. |
+| Google changes or restricts the Picker API further | Low–Med | High | `PhotoSource` interface (§6.7): the store, conversion and C64 protocol don't depend on the source, and other sources can take over. |
+| Shared-album page format changes | High (over time) | Med (experimental source only) | Pattern-based parsing, keep the last good list, config switch, never in a public release. |
+| Users expect "show my favorites / new photos automatically" | High | Med | Say clearly that picked photos are a curated set, and make "Pick more" one scan (P shows a QR). Offer shared/live albums (§6.7) for auto-updating in personal builds. Express interest in the Ambient API partner programme. |
 | OAuth verification needed for public use | Med (if public) | Med | Stay personal/family in Testing mode (≤100 users). Plan verification separately if you want a public service. |
 | 7-day expiry in Testing mode | Certain | Low | Not needed after ingest, because no refresh token is stored (correction #4). |
 | Terms of Service on storing derived images | Low–Med | Med | Per-user storage only, deleted on unpair or inactivity. Review the terms before a public release. |
 | No official Oscar64 WiC64 binding | Certain | Low–Med | Option A (embed the ACME-built library). Spike it early in Phase 3. |
 | VICE WiC64 emulation differs from real hardware / firmware 2.x | Med | Low | Test on hardware at the end of each milestone. |
 | Conversion quality on real-life photos (skin tones, portrait orientation) | Med | Med | Petsciiator already produces good results. Add face/centre-aware crop and a blurred letterbox for portrait photos as polish. |
-| Dependency on EgonOlsen71's infrastructure (`jpct.de`) and unpublished Maven artefacts | Certain | Med | Self-host (§6.7), remove hard-coded hosts, build Petsciiator/basicv2 locally (or vendor them). |
+| Dependency on EgonOlsen71's infrastructure (`jpct.de`) and unpublished Maven artefacts | Certain | Med | Self-host (§6.8), remove hard-coded hosts, build Petsciiator/basicv2 locally (or vendor them). |
 
 ---
 
@@ -329,11 +373,12 @@ Agreed on 2026-09-30:
 |---|---|---|---|
 | 1 | Audience | **Personal/family first, public later** | Start in OAuth **Testing** mode (≤100 accounts, no Google review). Build as if public from day one so verification later is paperwork, not a redesign: multi-user data model, per-user delete on unpair/"forget me", a privacy page on the portal, only the one Picker scope, no stored refresh tokens. Verification is a separate later step (§5). |
 | 2 | Fork scope | **Dedicated Google Photos viewer** | The Oscar64 client is Photos-only: no URL, page, search, AI or PDF input. The existing `ImageViewer` servlet and `basic/imageviewer.bas` stay untouched in the repo. The new backend lives in the same WAR as new servlets (`/p/*`, `/gp/*`) and reuses `ImageViewerService`'s conversion code. The Phase 1 PoC may still use the BASIC client through a `gp:` mode as a throw-away test harness. |
-| 3 | Hosting | **Not decided yet, so keep it hosting-neutral** | All host-specific values (public base URL, OAuth redirect, storage path, DB file) come from config or environment variables, not code. Storage is a plain directory + an embedded SQLite/H2 file, so a VPS, home server + tunnel, or a container with a volume all work. Nothing points at `jpct.de`. Hosting only has to be chosen before Phase 2 (OAuth needs the final HTTPS domain). |
+| 3 | Hosting | **Not decided yet, so keep it hosting-neutral** | All host-specific values (public base URL, OAuth redirect, storage path, DB file) come from config or environment variables, not code. Storage is a plain directory + an embedded SQLite/H2 file, so a VPS, home server + tunnel, or a container with a volume all work. Nothing points at `jpct.de`. Hosting only has to be chosen before Phase 2 (§6.8) (OAuth needs the final HTTPS domain). |
 | 4 | WiC64 firmware | **Firmware 2.0+ required** | Driver option A (official wic64-library, §7.3). Use the `R` protocol: the client checks the response size before accepting a payload, reports errors via `WIC64_GET_STATUS_MESSAGE`, and uses `%mac`. Option C (legacy `universal.prg`) is dropped except in the BASIC-based PoC. The client checks the firmware version at boot and shows "WiC64 firmware 2.0+ required". |
 | 5 | "Pick more" behaviour | **Append** | New picks are added to the end of the set. Duplicates are skipped by Google media item id. **To verify in the spike:** that Picker ids stay the same across sessions; otherwise fall back to filename + create time. A "clear all photos" action is on the portal and behind a confirm key on the C64. The per-device cap (for example 2,000, configurable) drops the oldest photos first, and the portal warns before that happens. |
 | 6 | C64 features at launch | **Hires toggle, dither/aspect options, save to disk, photo info** | See the variant caching and `op=info` changes below and in §6.3 and §7.4. |
 | 7 | Next step | **Update the study only** | No implementation yet. When you're ready, the next step is the Phase 0 spike (§8). You'll need to create the Google Cloud project first. |
+| 8 | Open: extra sources | **Not decided yet** | Include `SharedAlbumSource` in personal builds? Express interest in the Ambient API partner programme? (§3.5, §6.7) |
 
 ### 10.1 What the launch features mean for the design
 
@@ -353,3 +398,6 @@ Agreed on 2026-09-30:
 * [Oscar64 manual](https://github.com/drmortalwombat/oscar64/blob/main/oscar64.md)
 * [SM7I/WIC64-CC65](https://github.com/SM7I/WIC64-CC65), [huysmki/wic64-server](https://github.com/huysmki/wic64-server)
 * [VICE 3.8 release (WiC64 emulation)](https://csdb.dk/release/?id=238034&show=summary)
+* Prior art (§3.4): [esp32-photoframe-server](https://github.com/aitjcize/esp32-photoframe-server), [ha_google_photos_album](https://github.com/OldPhoneKiosk/ha_google_photos_album), [ImmichFrame](https://github.com/immichFrame/ImmichFrame), [MMM-GooglePhotos](https://github.com/hermanho/MMM-GooglePhotos), [mrworf/photoframe](https://github.com/mrworf/photoframe), [frameoff](https://github.com/hellodelay/frameoff)
+* Shared-album link parsing: [google-photos-album-image-url-fetch](https://www.npmjs.com/package/google-photos-album-image-url-fetch), [brotherlogic/rose pagination notes](https://github.com/brotherlogic/rose/issues/130); [Live albums](https://blog.google/products/photos/keep-your-favorite-photos-date-live-albums/)
+* [Picker: what users see](https://developers.google.com/photos/picker/guides/picking-experience) (no Favorites/Albums tabs; search instead), [Ambient API media items](https://developers.google.com/photos/ambient/guides/media-items), [Data Portability API scopes](https://developers.google.com/data-portability/user-guide/scopes)
