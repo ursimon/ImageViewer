@@ -68,7 +68,7 @@ To fetch a photo *again later*, the server must keep **credentials instead of im
 | **Picker session** | Until its `expireTime`, reportedly **~7 days** (one third-party data point; measured in step 0) | After that the photos can't be fetched any more. **The C64 automatically shows a new QR code**, and you scan and pick again. |
 | Refresh token (Testing mode / unverified app) | 7 days | Same window, so no extra effect |
 
-With pure middleware, **a C64 running for weeks needs a re-scan about once a week.** Because the phone usually stays signed in to Google, a re-scan is QR → confirm → pick. See §8 for ways around it if that turns out to be too often.
+With pure middleware, **a C64 running for weeks needs a re-scan about once a week.** Because the phone usually stays signed in to Google, a re-scan is QR → confirm → pick. This is accepted: re-scan when Google requires it (§8).
 
 ### Limit 2: you select photos, not folders
 
@@ -110,15 +110,25 @@ The wire format for `/c64` is the one from the study §6.3.
 
 Next after the prototype: point a real C64 at `/c64`. First the existing BASIC client for a smoke test, then the Oscar64 client (study §7).
 
-## 8. If weekly re-scanning is too often
+## 8. Re-scan policy (decided)
 
-To be decided after the prototype has measured the real lifetimes:
+**Pure middleware (option A): the C64 asks for a new QR scan only when Google requires it,** never on a fixed schedule. Nothing is stored except the credentials of §4.
 
-| Option | Stores | Re-scan needed | Notes |
+The server decides by reacting to Google's actual answers, not to predicted dates:
+
+| Google says | Meaning | Server action | C64 sees |
 |---|---|---|---|
-| **A. Pure middleware** (this plan) | Credentials only | ~weekly | Simplest; fully honours "nothing in the middle" |
-| **B. Cache on the C64's own disk** | Converted images **on your C64's drive** (SD2IEC / 1541), nothing on the server | Only to add photos | While the session is valid, the C64 downloads each picked photo once and saves it as a Koala file (the save feature already exists). Afterwards it plays offline indefinitely. A 1541 side holds ~16 Koala images (40 blocks each); SD2IEC holds thousands. Saving takes ~20–30 s per image at KERNAL speed, but downloading can run in the background over days while the slideshow plays. |
-| **C. Keep converted C64 images on the server** | 10 KB lossy 160×200 renditions only, never originals | Only to add photos | A compromise if B is too slow or you don't have an SD2IEC |
+| `baseUrl` 401/403/expired | Link older than 60 min | Re-list the session silently, retry once | Nothing |
+| Access token expired | Normal hourly expiry | Refresh silently, retry once | Nothing |
+| Refresh fails with `invalid_grant` | Refresh token expired or access revoked | Mark device **needs re-auth** | `op=status` → `expired` → new pairing QR ("Scan to continue") |
+| `sessions.get` / `mediaItems.list` reports the session missing or expired | Picker session reached its `expireTime` | Mark device **needs re-pick** | Same QR. Because the phone is still signed in, the scan goes straight to the picker. |
+
+Details:
+* The slideshow keeps running until the first refused request, so there's no early warning screen. The session's `expireTime` is only logged, to confirm the measured lifetime.
+* The C64 checks `op=status` between photos (and whenever `op=img` returns an error), so it switches to the QR screen within one slideshow interval.
+* The re-scan reuses the same device token, so it's a re-authorisation, not a new pairing. After picking, the slideshow restarts from photo 0 with the new selection.
+
+Options B (cache on the C64's own disk) and C (keep 10 KB C64 versions on the server) were considered and **not chosen**. They remain fallbacks if Google's lifetimes turn out much shorter than ~7 days.
 
 ## 9. Questions the prototype must answer
 
@@ -126,7 +136,7 @@ To be decided after the prototype has measured the real lifetimes:
 2. **Refresh token lifetime** in Testing mode (expected 7 days).
 3. **Selecting "a folder":** does searching an album name work, and can many photos or whole days be selected quickly? Does searching "favorites" work?
 4. **On-the-fly conversion time** per photo, and whether preloading the next photo hides it.
-5. **Is the ~weekly re-scan acceptable** (option A), or do we go with B or C?
+5. **How often does Google actually force a re-scan** (session vs. refresh-token expiry), and is the error handling in §8 complete?
 
 ## 10. Security (prototype level)
 
